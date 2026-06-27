@@ -1,102 +1,75 @@
 """
 trends_fetcher.py
-Fetches currently trending topics from Google Trends using pytrends.
-Returns a ranked list of trending keywords to guide clip selection.
+Fetches trending topics via multiple fallback methods:
+  1. pytrends realtime trending searches
+  2. pytrends daily trending (different endpoint)
+  3. Hardcoded evergreen viral topics (last resort)
 """
 
 import time
 import random
-from pytrends.request import TrendReq
 
 
 def get_trending_topics(geo: str = "US", top_n: int = 10) -> list[str]:
     """
-    Fetch top trending search topics from Google Trends.
-    
-    Args:
-        geo: Country code (US, IN, GB, etc.)
-        top_n: How many trending topics to return
-    
-    Returns:
-        List of trending keyword strings
+    Fetch top trending topics. Tries multiple methods with fallbacks.
     """
-    try:
-        pytrends = TrendReq(hl="en-US", tz=360, timeout=(10, 25))
-        
-        # Get daily trending searches
-        trending_df = pytrends.trending_searches(pn=_country_to_pn(geo))
-        
-        topics = trending_df[0].tolist()[:top_n]
-        print(f"[Trends] Fetched {len(topics)} trending topics for {geo}")
+    # Method 1: pytrends realtime
+    topics = _try_realtime_trends(geo, top_n)
+    if topics:
+        print(f"[Trends] ✓ Got {len(topics)} realtime trending topics")
         return topics
 
-    except Exception as e:
-        print(f"[Trends] Warning: Could not fetch trends ({e}). Using fallback topics.")
-        return _fallback_topics()
+    # Method 2: pytrends top charts
+    topics = _try_top_charts(geo, top_n)
+    if topics:
+        print(f"[Trends] ✓ Got {len(topics)} top chart topics")
+        return topics
+
+    # Method 3: evergreen fallback
+    print("[Trends] Using evergreen fallback topics")
+    return _evergreen_topics()[:top_n]
 
 
-def get_trending_topics_with_scores(geo: str = "US", top_n: int = 10) -> list[dict]:
-    """
-    Returns trending topics with their relative interest scores.
-    
-    Returns:
-        List of dicts: [{"topic": str, "score": int (0-100)}, ...]
-    """
-    topics = get_trending_topics(geo=geo, top_n=top_n)
-    
-    if not topics:
-        return []
-
+def _try_realtime_trends(geo: str, top_n: int) -> list[str]:
     try:
-        pytrends = TrendReq(hl="en-US", tz=360, timeout=(10, 25))
-        
-        # Score in batches of 5 (pytrends limit)
-        scored = []
-        batch = topics[:5]
-        
-        pytrends.build_payload(batch, timeframe="now 1-d", geo=geo)
-        time.sleep(random.uniform(1.5, 3.0))  # polite delay
-        interest_df = pytrends.interest_over_time()
-        
-        for topic in topics:
-            if topic in interest_df.columns:
-                score = int(interest_df[topic].mean())
-            else:
-                score = 50  # default mid-score if not found
-            scored.append({"topic": topic, "score": score})
-        
-        # Sort by score descending
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored
-
+        from pytrends.request import TrendReq
+        pt = TrendReq(hl="en-US", tz=360, timeout=(10, 25),
+                      retries=1, backoff_factor=0.5)
+        df = pt.realtime_trending_searches(pn=_to_pn(geo))
+        if df is not None and not df.empty:
+            col = df.columns[0]
+            return df[col].dropna().tolist()[:top_n]
     except Exception as e:
-        print(f"[Trends] Score fetch failed ({e}). Returning unscored topics.")
-        return [{"topic": t, "score": 50} for t in topics]
+        print(f"[Trends] Realtime failed: {e}")
+    return []
 
 
-def _country_to_pn(geo: str) -> str:
-    """Map ISO country code to pytrends pn parameter."""
+def _try_top_charts(geo: str, top_n: int) -> list[str]:
+    try:
+        from pytrends.request import TrendReq
+        pt = TrendReq(hl="en-US", tz=360, timeout=(10, 25),
+                      retries=1, backoff_factor=0.5)
+        df = pt.trending_searches(pn=_to_pn(geo))
+        if df is not None and not df.empty:
+            return df[0].dropna().tolist()[:top_n]
+    except Exception as e:
+        print(f"[Trends] Top charts failed: {e}")
+    return []
+
+
+def _to_pn(geo: str) -> str:
     mapping = {
-        "US": "united_states",
-        "IN": "india",
-        "GB": "united_kingdom",
-        "CA": "canada",
-        "AU": "australia",
+        "US": "united_states", "IN": "india",
+        "GB": "united_kingdom", "CA": "canada", "AU": "australia",
     }
     return mapping.get(geo.upper(), "united_states")
 
 
-def _fallback_topics() -> list[str]:
-    """Fallback trending topics if pytrends fails."""
+def _evergreen_topics() -> list[str]:
     return [
-        "viral video", "shocking moment", "unbelievable", 
-        "crazy reaction", "must watch", "unexpected", 
-        "incredible", "funny fail", "wholesome", "breaking news"
+        "viral moment", "unexpected", "shocking", "unbelievable",
+        "funny fail", "wholesome", "incredible skill", "caught on camera",
+        "you won't believe", "satisfying", "genius hack", "wild animal",
+        "amazing rescue", "close call", "instant karma"
     ]
-
-
-if __name__ == "__main__":
-    print("Testing trends fetcher...")
-    topics = get_trending_topics(geo="US", top_n=10)
-    for i, t in enumerate(topics, 1):
-        print(f"  {i}. {t}")
