@@ -1,0 +1,14 @@
+# Output files (too large for git — downloaded as Actions artifacts)
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
